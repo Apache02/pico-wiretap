@@ -21,6 +21,14 @@
 #define USBD_CDC_1_EP_IN 0x84
 #define USBD_CDC_1_EP_OUT 0x03
 
+#define USBD_CDC_2_EP_CMD  0x85
+#define USBD_CDC_2_EP_IN   0x86
+#define USBD_CDC_2_EP_OUT  0x05
+
+#define USBD_CDC_3_EP_CMD  0x87
+#define USBD_CDC_3_EP_IN   0x88
+#define USBD_CDC_3_EP_OUT  0x07
+
 #define USBD_CDC_CMD_MAX_SIZE 8
 #define USBD_CDC_IN_OUT_MAX_SIZE 64
 
@@ -29,27 +37,30 @@
 #define USBD_STR_MANUF (0x01)
 #define USBD_STR_PRODUCT (0x02)
 #define USBD_STR_SERIAL (0x03)
-#define USBD_STR_CDC (0x04)
+#define USBD_STR_CDC_0 (0x04)
+#define USBD_STR_CDC_1 (0x05)
+#define USBD_STR_CDC_2 (0x06)
+#define USBD_STR_CDC_3 (0x07)
 
 //--------------------------------------------------------------------+
 // Device Descriptors
 //--------------------------------------------------------------------+
 
 static const tusb_desc_device_t desc_device = {
-        .bLength            = sizeof(tusb_desc_device_t),
-        .bDescriptorType    = TUSB_DESC_DEVICE,
-        .bcdUSB             = 0x0200,
-        .bDeviceClass       = TUSB_CLASS_MISC,
-        .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
-        .bDeviceProtocol    = MISC_PROTOCOL_IAD,
-        .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
-        .idVendor           = USBD_VID,
-        .idProduct          = USBD_PID,
-        .bcdDevice          = 0x0100,
-        .iManufacturer      = USBD_STR_MANUF,
-        .iProduct           = USBD_STR_PRODUCT,
-        .iSerialNumber      = USBD_STR_SERIAL,
-        .bNumConfigurations = 1,
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = TUSB_CLASS_MISC,
+    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol = MISC_PROTOCOL_IAD,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+    .idVendor = USBD_VID,
+    .idProduct = USBD_PID,
+    .bcdDevice = 0x0100,
+    .iManufacturer = USBD_STR_MANUF,
+    .iProduct = USBD_STR_PRODUCT,
+    .iSerialNumber = USBD_STR_SERIAL,
+    .bNumConfigurations = 1,
 };
 
 const uint8_t *tud_descriptor_device_cb(void) {
@@ -60,26 +71,37 @@ const uint8_t *tud_descriptor_device_cb(void) {
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 
-enum
-{
+enum {
     ITF_NUM_CDC_0 = 0,
     ITF_NUM_CDC_0_DATA,
     ITF_NUM_CDC_1,
     ITF_NUM_CDC_1_DATA,
+    ITF_NUM_CDC_2,
+    ITF_NUM_CDC_2_DATA,
+    ITF_NUM_CDC_3,
+    ITF_NUM_CDC_3_DATA,
     ITF_NUM_TOTAL
 };
 
 static const uint8_t desc_config[USBD_DESC_LEN] = {
-        TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, USBD_STR_LANGUAGE, USBD_DESC_LEN,
-                              TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, USBD_MAX_POWER_MA),
+    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, USBD_STR_LANGUAGE, USBD_DESC_LEN,
+                          TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, USBD_MAX_POWER_MA),
 
-        TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, USBD_STR_CDC, USBD_CDC_0_EP_CMD,
-                           USBD_CDC_CMD_MAX_SIZE, USBD_CDC_0_EP_OUT, USBD_CDC_0_EP_IN,
-                           USBD_CDC_IN_OUT_MAX_SIZE),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_0, USBD_STR_CDC_0, USBD_CDC_0_EP_CMD,
+                       USBD_CDC_CMD_MAX_SIZE, USBD_CDC_0_EP_OUT, USBD_CDC_0_EP_IN,
+                       USBD_CDC_IN_OUT_MAX_SIZE),
 
-        TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_1, USBD_STR_CDC, USBD_CDC_1_EP_CMD,
-                           USBD_CDC_CMD_MAX_SIZE, USBD_CDC_1_EP_OUT, USBD_CDC_1_EP_IN,
-                           USBD_CDC_IN_OUT_MAX_SIZE),
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_1, USBD_STR_CDC_1, USBD_CDC_1_EP_CMD,
+                       USBD_CDC_CMD_MAX_SIZE, USBD_CDC_1_EP_OUT, USBD_CDC_1_EP_IN,
+                       USBD_CDC_IN_OUT_MAX_SIZE),
+
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_2, USBD_STR_CDC_2, USBD_CDC_2_EP_CMD,
+                       USBD_CDC_CMD_MAX_SIZE, USBD_CDC_2_EP_OUT, USBD_CDC_2_EP_IN,
+                       USBD_CDC_IN_OUT_MAX_SIZE),
+
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC_3, USBD_STR_CDC_3, USBD_CDC_3_EP_CMD,
+                       USBD_CDC_CMD_MAX_SIZE, USBD_CDC_3_EP_OUT, USBD_CDC_3_EP_IN,
+                       USBD_CDC_IN_OUT_MAX_SIZE),
 };
 
 const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
@@ -97,11 +119,14 @@ void usbd_serial_init(void) {
 }
 
 static const char *const desc_string_arr[] = {
-        [USBD_STR_LANGUAGE] = (const char[]) {0x09, 0x04},  // 0: is supported language is English (0x0409)
-        [USBD_STR_MANUF] = "Raspberry Pi",                  // 1: Manufacturer
-        [USBD_STR_PRODUCT] = "Pico Shell",                // 2: Product
-        [USBD_STR_SERIAL] = usb_serial,                     // 3: Serials, should use chip ID
-        [USBD_STR_CDC] = "CDC",                             // 4: CDC Interface
+    [USBD_STR_LANGUAGE] = (const char[]){0x09, 0x04}, // 0: is supported language is English (0x0409)
+    [USBD_STR_MANUF] = "Raspberry Pi", // 1: Manufacturer
+    [USBD_STR_PRODUCT] = "Pico Wiretap", // 2: Product
+    [USBD_STR_SERIAL] = usb_serial, // 3: Serials, should use chip ID
+    [USBD_STR_CDC_0] = "Shell",
+    [USBD_STR_CDC_1] = "UART0",
+    [USBD_STR_CDC_2] = "UART1",
+    [USBD_STR_CDC_3] = "Plot",
 };
 
 static uint16_t desc_str[DESC_STR_MAX];
@@ -127,4 +152,3 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index, __unused uint16_t langid
 
     return desc_str;
 }
-
