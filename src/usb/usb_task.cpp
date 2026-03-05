@@ -24,6 +24,6 @@ void vTaskUsb(__unused void *pvParams) {
     }
 }
 
-bool usb_is_connected() {
+bool is_usb_connected() {
     return tud_cdc_n_connected(ITF_SHELL);
 }

@@ -9,6 +9,7 @@ add_executable(
         usb/usb_descriptors.c
         usb/usb_task.cpp
         shell_task.cpp
+        uart/uart_task.cpp
         handlers.cpp
 )
 

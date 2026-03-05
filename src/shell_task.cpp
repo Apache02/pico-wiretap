@@ -13,7 +13,7 @@ extern const Shell::Handler handlers[];
 
 static void wait_usb() {
     vTaskDelay(pdMS_TO_TICKS(500));
-    while (!usb_is_connected()) {
+    while (!is_usb_connected()) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -33,13 +33,13 @@ void vTaskShell(__unused void *pvParams) {
         shell->reset();
         shell->start();
 
-        while (usb_is_connected()) {
+        while (is_usb_connected()) {
             char rx;
             if (tud_cdc_n_read(ITF_SHELL, &rx, sizeof(rx)) > 0) {
                 shell->update(rx);
             }
 
-            vTaskDelay(1);
+            vTaskDelay(5);
         }
     }
 }

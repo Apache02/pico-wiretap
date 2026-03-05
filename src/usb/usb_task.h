@@ -3,7 +3,7 @@
 
 void vTaskUsb(void *pvParams);
 
-bool usb_is_connected();
+bool is_usb_connected();
 
 #ifdef __cplusplus
 extern "C"
