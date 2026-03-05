@@ -50,9 +50,12 @@ int main() {
     xTaskCreate(vTaskShell, "shell",configMINIMAL_STACK_SIZE * 4, nullptr,configMAX_PRIORITIES - 2, &xhTaskShell);
     vTaskCoreAffinitySet(xhTaskShell, 1 << 0);
 
-    TaskHandle_t xhTaskUart0;
-    xTaskCreate(vTaskUart, "uart0",configMINIMAL_STACK_SIZE * 8, nullptr,configMAX_PRIORITIES - 1, &xhTaskUart0);
+    unsigned int uUartNumber0 = 0, uUartNumber1 = 1;
+    TaskHandle_t xhTaskUart0, xhTaskUart1;
+    xTaskCreate(vTaskUart, "uart0",configMINIMAL_STACK_SIZE * 8, &uUartNumber0,configMAX_PRIORITIES - 1, &xhTaskUart0);
+    xTaskCreate(vTaskUart, "uart1",configMINIMAL_STACK_SIZE * 8, &uUartNumber1,configMAX_PRIORITIES - 1, &xhTaskUart1);
     vTaskCoreAffinitySet(xhTaskUart0, 1 << 1);
+    vTaskCoreAffinitySet(xhTaskUart1, 1 << 1);
 
     vTaskStartScheduler();
 
