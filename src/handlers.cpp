@@ -10,6 +10,7 @@ extern const Shell::Handler handlers[];
 
 const Shell::Handler handlers[] = {
     {"help", help},
+    {"pinout", command_pinout},
     {"echo", command_echo},
     {"dump", command_dump},
     {"dump32", command_dump32},
