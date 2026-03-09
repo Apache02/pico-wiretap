@@ -48,6 +48,7 @@ static struct {
     Measurement adc28;
     Measurement adc29;
     uint32_t rate; // samples per second
+    bool print_header;
 } state = {
     .gpio14 = {false},
     .gpio15 = {false},
@@ -60,6 +61,7 @@ static struct {
     .adc28 = {false},
     .adc29 = {false},
     .rate = PLOT_DEFAULT_RATE,
+    .print_header = false,
 };
 
 typedef enum {
@@ -176,19 +178,42 @@ static void measure_all() {
 // ---------------------------------------------------------------------------
 
 static void print_all() {
+    if (state.print_header) {
+        state.print_header = false;
+
+        cdc_puts(ITF_PLOT, "# ");
+        for (auto m: measurements) {
+            if (!m.ptr->enabled) continue;
+
+            auto pin = m.pin;
+            switch (m.mode) {
+                case GPIO:
+                    cdc_printf(ITF_PLOT, "gpio%d ", pin);
+                    break;
+                case ADC:
+                    cdc_printf(ITF_PLOT, "adc%d ", pin);
+                    break;
+                case PWM:
+                    cdc_printf(ITF_PLOT, "pwm%d_f pwm%d_d ", pin, pin);
+                    break;
+            }
+        }
+        cdc_puts(ITF_PLOT, "\r\n");
+    }
+
     for (auto m: measurements) {
         if (!m.ptr->enabled) continue;
 
         auto pin = m.pin;
         switch (m.mode) {
             case GPIO:
-                cdc_printf(ITF_PLOT, "gpio%d:%u ", pin, m.ptr->value);
+                cdc_printf(ITF_PLOT, "%u ", m.ptr->value);
                 break;
             case ADC:
-                cdc_printf(ITF_PLOT, "adc%d:%.3f ", pin, m.ptr->voltage);
+                cdc_printf(ITF_PLOT, "%.3f ", m.ptr->voltage);
                 break;
             case PWM:
-                cdc_printf(ITF_PLOT, "pwm%d_f:%u pwm%d_d:%u ", pin, m.ptr->pwm.frequency, pin, m.ptr->pwm.duty);
+                cdc_printf(ITF_PLOT, "%u %u ", pin, m.ptr->pwm.frequency, pin, m.ptr->pwm.duty);
                 break;
         }
     }
@@ -445,7 +470,8 @@ int command_plot(int argc, const char *argv[]) {
     }
 
     if (strcmp(action, "add") == 0) {
-        auto ret = action_add(argc - 2, argv + 2);
+        int ret = action_add(argc - 2, argv + 2);
+        state.print_header = true;
         if (any_enabled()) {
             plot_task_wake();
         }
@@ -457,16 +483,24 @@ int command_plot(int argc, const char *argv[]) {
             usage();
             return 1;
         }
+        int ret;
+
         if (strcmp(argv[2], "all") == 0) {
-            return action_reset();
+            ret = action_reset();
+        } else {
+            ret = action_remove(argc - 2, argv + 2);
         }
-        return action_remove(argc - 2, argv + 2);
+        state.print_header = true;
+
+        return ret;
     }
     if (strcmp(action, "status") == 0) {
         return action_status(argc - 2, argv + 2);
     }
     if (strcmp(action, "reset") == 0) {
-        return action_reset();
+        int ret = action_reset();
+        state.print_header = true;
+        return ret;
     }
     if (strcmp(action, "rate") == 0) {
         return action_rate(argc - 2, argv + 2);
