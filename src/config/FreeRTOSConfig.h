@@ -36,7 +36,7 @@
 #define configUSE_TIME_SLICING                  1           // Allow FreeRTOS to switch tasks at each tick
 #define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
 #define configUSE_TICKLESS_IDLE                 0
-#define configCPU_CLOCK_HZ                      125'000'000
+#define configCPU_CLOCK_HZ                      250'000'000
 #define configTICK_RATE_HZ                      1000        // FreeRTOS beats per second
 #define configMAX_PRIORITIES                    5           // Max number of priority values (0-24)
 #define configMINIMAL_STACK_SIZE                128
@@ -86,6 +86,10 @@
 #define configTIMER_TASK_PRIORITY               ( configMAX_PRIORITIES - 1 )
 #define configTIMER_QUEUE_LENGTH                10
 #define configTIMER_TASK_STACK_DEPTH            256
+
+#define configTIMER_SERVICE_TASK_NAME          "_timer"
+#define configIDLE_TASK_NAME                   "_idle"
+
 
 /* SMP port only */
 #define configNUMBER_OF_CORES                   2

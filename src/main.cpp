@@ -9,6 +9,7 @@
 #include "usb/usb_task.h"
 #include "shell_task.h"
 #include "uart/uart_task.h"
+#include "plot/plot_task.h"
 
 
 int transfer_flag = 0;
@@ -56,6 +57,8 @@ int main() {
     xTaskCreate(vTaskUart, "uart1",configMINIMAL_STACK_SIZE * 8, &uUartNumber1,configMAX_PRIORITIES - 1, &xhTaskUart1);
     vTaskCoreAffinitySet(xhTaskUart0, 1 << 1);
     vTaskCoreAffinitySet(xhTaskUart1, 1 << 1);
+
+    xTaskCreate(vTaskPlot, "plot",configMINIMAL_STACK_SIZE * 8, nullptr,configMAX_PRIORITIES - 1, &xhTaskPlot);
 
     vTaskStartScheduler();
 

@@ -1,7 +1,8 @@
+#include <stdio.h>
 #include "shell/Shell.h"
 #include "shell/commands_common.h"
 #include "commands/commands.h"
-#include <stdio.h>
+#include "plot/plot_command.h"
 
 
 static int help(int, const char *[]);
@@ -19,6 +20,7 @@ const Shell::Handler handlers[] = {
     {"i2c_scan", command_i2c_scan},
     {"chip_id", command_chip_id},
     {"tasks", command_tasks},
+    {"plot", command_plot},
     // required at the end
     {nullptr, nullptr},
 };

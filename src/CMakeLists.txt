@@ -2,6 +2,7 @@ pico_sdk_init()
 
 add_subdirectory(shell)
 add_subdirectory(commands)
+add_subdirectory(plot)
 
 add_executable(
         pico_wiretap
@@ -30,6 +31,7 @@ target_link_libraries(
         shell_main
         shell_commands_common
         commands
+        plot
 )
 
 add_deploy_target(pico_wiretap "${CMAKE_CURRENT_BINARY_DIR}/pico_wiretap.uf2")
