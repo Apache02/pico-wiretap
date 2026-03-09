@@ -352,18 +352,22 @@ static int action_add(int argc, const char *argv[]) {
 }
 
 static int action_status(int argc, const char *argv[]) {
+    int pins[argc];
+    for (int i = 0; i < argc; i++) {
+        pins[i] = take_int(argv[i]).ok_or(-1);
+    }
+
+    printf("  %-4s  %-5s  %-6s  %-8s  %s\r\n", "pin", "type", "status", "value", "freq");
+    printf("  ----  -----  ------  --------  --------\r\n");
+
     for (auto m: measurements) {
-        if (argc > 0) {
-            bool requested = false;
-            for (int i = 0; i < argc; i++) {
-                auto result = take_int(argv[i]);
-                if (!result.is_err() && (uint) result.r == m.pin) {
-                    requested = true;
-                    break;
-                }
+        bool requested = argc == 0;
+        for (int i = 0; i < argc && !requested; i++) {
+            if (pins[i] == m.pin) {
+                requested = true;
             }
-            if (!requested) continue;
         }
+        if (!requested) continue;
 
         const char *mode_str = "?";
         for (auto mn: mode_names) {
@@ -374,20 +378,21 @@ static int action_status(int argc, const char *argv[]) {
         }
 
         if (m.ptr->enabled) {
+            char value[16] = "-";
+            char freq[16] = "";
             switch (m.mode) {
-                case GPIO:
-                    printf("  %s #%u: " COLOR_GREEN("on") " val=%d\r\n", mode_str, m.pin, m.ptr->value != 0);
+                case GPIO: snprintf(value, sizeof(value), "%d", m.ptr->value != 0);
                     break;
-                case ADC:
-                    printf("  %s #%u: " COLOR_GREEN("on") " val=%.3fV\r\n", mode_str, m.pin, m.ptr->voltage);
+                case ADC: snprintf(value, sizeof(value), "%.3fV", m.ptr->voltage);
                     break;
                 case PWM:
-                    printf("  %s #%u: " COLOR_GREEN("on") " f=%luHz d=%u%%\r\n", mode_str, m.pin, m.ptr->pwm.frequency,
-                           m.ptr->pwm.duty);
+                    snprintf(value, sizeof(value), "%u%%", m.ptr->pwm.duty);
+                    snprintf(freq, sizeof(freq), "%luHz", m.ptr->pwm.frequency);
                     break;
             }
+            printf("  %-4u  %-5s  " COLOR_GREEN("%-6s") "  %-8s  %s\r\n", m.pin, mode_str, "on", value, freq);
         } else {
-            printf("  %s #%u: off\r\n", mode_str, m.pin);
+            printf("  %-4u  %-5s  %-6s  %-8s  %-1s\r\n", m.pin, mode_str, "off", "-", "");
         }
     }
 
