@@ -2,11 +2,14 @@
 
 #include <string.h>
 
+#ifndef SHELL_INPUT_BUFFER_SIZE
+#define SHELL_INPUT_BUFFER_SIZE 2048
+#endif
 
 struct Input {
-    int sentinel1 = 0xDEADBEEF;
-    char buffer[16384]{};
-    int sentinel2 = 0xF00DCAFE;
+    unsigned int sentinel1 = 0xDEADBEEF;
+    char buffer[SHELL_INPUT_BUFFER_SIZE]{};
+    unsigned int sentinel2 = 0xF00DCAFE;
     int size = 0;
     bool error = false;
     char *cursor = buffer;
@@ -16,14 +19,24 @@ struct Input {
         size = 0;
         error = false;
         cursor = buffer;
+        sentinel1 = 0xDEADBEEF;
+        sentinel2 = 0xF00DCAFE;
+    }
+
+    bool check_integrity() {
+        return sentinel1 == 0xDEADBEEF && sentinel2 == 0xF00DCAFE;
     }
 
     void put(char c) {
-        if (size >= sizeof(buffer) - 1) {
+        if (size >= static_cast<int>(sizeof(buffer) - 1)) {
             error = true;
+            return;
         }
         *cursor++ = c;
         size++;
+        if (!check_integrity()) {
+            error = true;
+        }
     }
 
     void end() {

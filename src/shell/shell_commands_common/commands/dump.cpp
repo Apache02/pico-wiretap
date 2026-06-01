@@ -18,17 +18,17 @@ static bool validate_addr_or_print_error(uint32_t addr) {
 
 
 int command_dump(int argc, const char *argv[]) {
-    uint32_t addr = take_int(argv[1]).ok_or(DUMP_DEFAULT_ADDRESS);
+    auto addr = take_int(argv[1]).ok_or(DUMP_DEFAULT_ADDRESS);
     unsigned int count = 16 * 16;
 
     printf("addr 0x%08x\r\n", addr);
 
-    if (!validate_addr_or_print_error(addr)) {
+    if (!validate_addr_or_print_error(static_cast<uint32_t>(addr))) {
         return 1;
     }
 
     for (size_t i = 0; i < count;) {
-        printf("%02x ", (*((volatile uint8_t *) (addr + i))));
+        printf("%02x ", *(reinterpret_cast<volatile uint8_t *>(addr + i)));
         i += sizeof(uint8_t);
         if (i % 16 == 0) {
             printf("\r\n");
@@ -39,7 +39,7 @@ int command_dump(int argc, const char *argv[]) {
 }
 
 int command_dump32(int argc, const char *argv[]) {
-    uint32_t addr = take_int(argv[1]).ok_or(DUMP_DEFAULT_ADDRESS);
+    auto addr = take_int(argv[1]).ok_or(DUMP_DEFAULT_ADDRESS);
     unsigned int count = 16 * 16;
 
     printf("addr 0x%08x\r\n", addr);
@@ -49,7 +49,7 @@ int command_dump32(int argc, const char *argv[]) {
     }
 
     for (size_t i = 0; i < count;) {
-        printf("%08lx ", (*((volatile uint32_t *) (addr + i))));
+        printf("%08lx ", *(reinterpret_cast<volatile uint32_t *>(addr + i)));
         i += sizeof(uint32_t);
         if (i % 16 == 0) {
             printf("\r\n");

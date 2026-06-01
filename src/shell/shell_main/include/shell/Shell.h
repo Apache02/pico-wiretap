@@ -2,7 +2,6 @@
 
 #include "Input.h"
 #include "History.h"
-#include <stdint.h>
 
 
 class Shell {
@@ -12,6 +11,7 @@ public:
     struct Handler {
         const char *const name;
         CommandHandlerFunction *const handler;
+        const char *const description;
     };
 
 private:
@@ -33,10 +33,9 @@ private:
     History *history = nullptr;
     const Handler *handlers = nullptr;
 
-    Input input;
+    Input *input;
 
 public:
-
     Shell(const Handler *handlers);
 
     ~Shell();
@@ -46,6 +45,8 @@ public:
     void start();
 
     void update(int c);
+
+    void clear_line();
 
     void replace_command(const char *command);
 
@@ -57,3 +58,5 @@ public:
 
     void autocomplete();
 };
+
+void print_command_help(const Shell::Handler *ptr);
