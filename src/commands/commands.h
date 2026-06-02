@@ -12,3 +12,5 @@ int command_i2c_scan(int, const char *[]);
 int command_chip_id(int, const char *[]);
 
 int command_tasks(int argc, const char *argv[]);
+
+int command_beken(int argc, const char *argv[]);

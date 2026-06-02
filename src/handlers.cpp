@@ -21,6 +21,7 @@ const Shell::Handler handlers[] = {
     {"chip_id", command_chip_id},
     {"tasks", command_tasks},
     {"plot", command_plot},
+    {"beken", command_beken},
     // required at the end
     {nullptr, nullptr},
 };

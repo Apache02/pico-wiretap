@@ -12,4 +12,5 @@ target_link_libraries(
         hardware_clocks
         hardware_adc
         hardware_i2c
+        hardware_spi
 )

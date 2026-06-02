@@ -48,7 +48,7 @@ int main() {
     vTaskCoreAffinitySet(xhTaskUsb, 1 << 0);
 
     TaskHandle_t xhTaskShell;
-    xTaskCreate(vTaskShell, "shell",configMINIMAL_STACK_SIZE * 4, nullptr,configMAX_PRIORITIES - 2, &xhTaskShell);
+    xTaskCreate(vTaskShell, "shell",configMINIMAL_STACK_SIZE * 8, nullptr,configMAX_PRIORITIES - 2, &xhTaskShell);
     vTaskCoreAffinitySet(xhTaskShell, 1 << 0);
 
     unsigned int uUartNumber0 = 0, uUartNumber1 = 1;
