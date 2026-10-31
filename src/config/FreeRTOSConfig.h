@@ -60,10 +60,11 @@
 // than the number of bytes in a size_t.
 
 /* Memory allocation related definitions. */
-#define configSUPPORT_STATIC_ALLOCATION         0
+#define configSUPPORT_STATIC_ALLOCATION         1
 #define configSUPPORT_DYNAMIC_ALLOCATION        1           // Get FreeRTOS to allocation task memory
 #define configTOTAL_HEAP_SIZE                   (128*1024)
 #define configAPPLICATION_ALLOCATED_HEAP        0
+#define configKERNEL_PROVIDED_STATIC_MEMORY     1
 
 /* Hook function related definitions. */
 #define configUSE_IDLE_HOOK                     0

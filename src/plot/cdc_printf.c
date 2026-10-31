@@ -3,7 +3,7 @@
 #include <stdarg.h>
 #include "tusb.h"
 
-extern int transfer_flag;
+extern volatile int transfer_flag;
 
 void cdc_puts(uint8_t itf, const char *s) {
     transfer_flag = 1;

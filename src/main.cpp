@@ -12,11 +12,13 @@
 #include "plot/plot_task.h"
 
 
-int transfer_flag = 0;
+volatile int transfer_flag = 0;
 
 #ifdef PICO_DEFAULT_LED_PIN
 
-void vTaskLed(__unused void *pvParams) {
+static StaticTask_t xLedTaskTCB;
+static StackType_t  xLedTaskStack[configMINIMAL_STACK_SIZE];
+static void vTaskLed(__unused void *pvParams) {
     gpio_init(PICO_DEFAULT_LED_PIN);
     gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
@@ -29,6 +31,10 @@ void vTaskLed(__unused void *pvParams) {
 
 #endif
 
+static StaticTask_t xUart0TaskTCB, xUart1TaskTCB;
+static StackType_t  xUart0TaskStack[configMINIMAL_STACK_SIZE * 8];
+static StackType_t  xUart1TaskStack[configMINIMAL_STACK_SIZE * 8];
+
 void init_hardware() {
     set_sys_clock_khz(configCPU_CLOCK_HZ / 1000, false);
     usbd_serial_init();
@@ -40,7 +46,7 @@ int main() {
     init_hardware();
 
 #ifdef PICO_DEFAULT_LED_PIN
-    xTaskCreate(vTaskLed, "led",configMINIMAL_STACK_SIZE, nullptr, 1, nullptr);
+    xTaskCreateStatic(vTaskLed, "led", count_of(xLedTaskStack), nullptr, 1, &xLedTaskStack[0], &xLedTaskTCB);
 #endif
 
     TaskHandle_t xhTaskUsb;
@@ -51,12 +57,11 @@ int main() {
     xTaskCreate(vTaskShell, "shell",configMINIMAL_STACK_SIZE * 4, nullptr,configMAX_PRIORITIES - 2, &xhTaskShell);
     vTaskCoreAffinitySet(xhTaskShell, 1 << 0);
 
-    unsigned int uUartNumber0 = 0, uUartNumber1 = 1;
-    TaskHandle_t xhTaskUart0, xhTaskUart1;
-    xTaskCreate(vTaskUart, "uart0",configMINIMAL_STACK_SIZE * 8, &uUartNumber0,configMAX_PRIORITIES - 1, &xhTaskUart0);
-    xTaskCreate(vTaskUart, "uart1",configMINIMAL_STACK_SIZE * 8, &uUartNumber1,configMAX_PRIORITIES - 1, &xhTaskUart1);
-    vTaskCoreAffinitySet(xhTaskUart0, 1 << 1);
-    vTaskCoreAffinitySet(xhTaskUart1, 1 << 1);
+    // The UART number travels in the pointer itself: main()'s stack is reclaimed for
+    // interrupts once the scheduler starts, before the tasks would read through it.
+    // Pinned from creation: each task enables its UART IRQ on the core it runs on.
+    xTaskCreateStaticAffinitySet(vTaskUart, "uart0", count_of(xUart0TaskStack), reinterpret_cast<void *>(0), configMAX_PRIORITIES - 1, &xUart0TaskStack[0], &xUart0TaskTCB, 1 << 1);
+    xTaskCreateStaticAffinitySet(vTaskUart, "uart1", count_of(xUart1TaskStack), reinterpret_cast<void *>(1), configMAX_PRIORITIES - 1, &xUart1TaskStack[0], &xUart1TaskTCB, 1 << 1);
 
     xTaskCreate(vTaskPlot, "plot",configMINIMAL_STACK_SIZE * 8, nullptr,configMAX_PRIORITIES - 1, &xhTaskPlot);
 

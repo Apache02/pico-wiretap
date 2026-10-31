@@ -1,12 +1,14 @@
 #include "uart_task.h"
+#include <string.h>
 #include <FreeRTOS.h>
 #include <task.h>
-#include <semphr.h>
 #include "hardware/gpio.h"
+#include "hardware/irq.h"
 #include "hardware/uart.h"
 
 #include "tusb.h"
 #include "usb_itf.h"
+#include "utils/ring_buffer.h"
 
 
 #define UART0_TX_PIN         0
@@ -15,193 +17,250 @@
 #define UART1_TX_PIN         4
 #define UART1_RX_PIN         5
 
-#define BUFFER_SIZE         2560
+// UART -> USB backlog, the only place bytes wait while the host is slow to read:
+// ~180 ms at 921600 baud, ~1.4 s at 115200.
+#define RX_BUFFER_SIZE      16384
 #define DEFAULT_BAUDRATE    115200
 
-extern int transfer_flag;
+// FIFO trigger levels, in eighths of the 32-entry FIFOs (0 = 1/8 ... 4 = 7/8). Half-full
+// leaves the IRQ 16 bytes of slack before an overrun and the task 16 bytes before the
+// TX line goes idle.
+#define RX_FIFO_LEVEL       2
+#define TX_FIFO_LEVEL       2
+
+// How long the task sleeps with no IRQ or USB callback to wake it; a safety net only.
+#define IDLE_TIMEOUT        pdMS_TO_TICKS(10)
+
+extern volatile int transfer_flag;
+
+RINGBUF_DECLARE(uart0_rx, RX_BUFFER_SIZE);
+RINGBUF_DECLARE(uart1_rx, RX_BUFFER_SIZE);
 
 typedef struct {
     uint8_t itf;
 
-    uint pin1;
-    uint pin2;
+    uint tx_pin;
+    uint rx_pin;
     uart_inst_t *instance;
-    uint32_t baudrate;
+    uint irq;
 
-    cdc_line_coding_t uart;
-    cdc_line_coding_t usb;
+    // Woken by the UART IRQ and by the CDC callbacks.
+    TaskHandle_t volatile task;
 
-    SemaphoreHandle_t mtx;
-    uint8_t buf_uart[BUFFER_SIZE];
-    uint8_t buf_tmp[BUFFER_SIZE];
-    size_t buf_uart_size;
-    uint8_t buf_usb[BUFFER_SIZE];
-} uart_config_t;
+    // What the UART is currently configured to.
+    cdc_line_coding_t line_coding;
 
-static uart_config_t configs[2] = {
+    // UART -> USB: filled by the IRQ, drained by the task.
+    struct ringbuf *rx;
+
+    // USB -> UART: read from CDC, not yet in the UART FIFO. Bytes the UART cannot take stay
+    // in the CDC FIFO, so TinyUSB NAKs the host instead of anything being dropped.
+    uint8_t tx[CFG_TUD_CDC_RX_BUFSIZE];
+    size_t tx_len;
+    size_t tx_pos;
+
+    // Loss counters, never reset.
+    volatile uint32_t overruns;  // UART FIFO overflowed before the IRQ emptied it
+    volatile uint32_t dropped;   // rx was full, the byte was discarded
+    volatile uint32_t errors;    // received with a framing, parity or break error
+} uart_bridge_t;
+
+static uart_bridge_t bridges[2] = {
     {
         .itf = ITF_UART0,
-
-        .pin1 = UART0_TX_PIN,
-        .pin2 = UART0_RX_PIN,
+        .tx_pin = UART0_TX_PIN,
+        .rx_pin = UART0_RX_PIN,
         .instance = uart0,
-        .baudrate = DEFAULT_BAUDRATE,
-        .uart = {0},
-        .usb = {
-            .bit_rate = DEFAULT_BAUDRATE,
-            .stop_bits = 1,
-            .parity = 0,
-            .data_bits = 8,
-        },
-
-        .buf_uart = {0},
-        .buf_tmp = {0},
-        .buf_uart_size = 0,
-        .buf_usb = {0},
+        .irq = UART0_IRQ,
+        .rx = &uart0_rx,
     },
     {
         .itf = ITF_UART1,
-
-        .pin1 = UART1_TX_PIN,
-        .pin2 = UART1_RX_PIN,
+        .tx_pin = UART1_TX_PIN,
+        .rx_pin = UART1_RX_PIN,
         .instance = uart1,
-        .baudrate = DEFAULT_BAUDRATE,
-        .uart = {0},
-        .usb = {
-            .bit_rate = DEFAULT_BAUDRATE,
-            .stop_bits = 1,
-            .parity = 0,
-            .data_bits = 8,
-        },
-
-        .buf_uart = {0},
-        .buf_tmp = {0},
-        .buf_uart_size = 0,
-        .buf_usb = {0},
+        .irq = UART1_IRQ,
+        .rx = &uart1_rx,
     },
 };
 
 
-void uart0_irq() {
-    xSemaphoreTakeFromISR(configs[0].mtx, NULL);
-    while (uart_is_readable(configs[0].instance) && configs[0].buf_uart_size < sizeof(configs[0].buf_uart)) {
-        configs[0].buf_uart[configs[0].buf_uart_size++] = uart_getc(configs[0].instance);
-    }
-    xSemaphoreGiveFromISR(configs[0].mtx, NULL);
+static void notify_bridge(uart_bridge_t &bridge) {
+    TaskHandle_t task = bridge.task;
+    if (task) xTaskNotifyGive(task);
 }
 
-void uart1_irq() {
-    xSemaphoreTakeFromISR(configs[1].mtx, NULL);
-    while (uart_is_readable(configs[1].instance) && configs[1].buf_uart_size < sizeof(configs[1].buf_uart)) {
-        configs[1].buf_uart[configs[1].buf_uart_size++] = uart_getc(configs[1].instance);
+static void uart_bridge_irq(uart_bridge_t &bridge) {
+    uart_hw_t *hw = uart_get_hw(bridge.instance);
+
+    // Empty the FIFO even when rx is full: a byte left behind keeps the IRQ asserted and
+    // would lock this core inside the handler.
+    while (!(hw->fr & UART_UARTFR_RXFE_BITS)) {
+        const uint32_t dr = hw->dr;
+
+        if (dr & UART_UARTDR_OE_BITS) bridge.overruns++;
+        if (dr & (UART_UARTDR_BE_BITS | UART_UARTDR_PE_BITS | UART_UARTDR_FE_BITS)) bridge.errors++;
+
+        if (!ringbuf_put_byte(bridge.rx, (uint8_t) dr)) bridge.dropped++;
     }
-    xSemaphoreGiveFromISR(configs[1].mtx, NULL);
+
+    // The TX FIFO has room again; the task re-arms this once it fills the FIFO up.
+    if (hw->mis & UART_UARTMIS_TXMIS_BITS) hw_clear_bits(&hw->imsc, UART_UARTIMSC_TXIM_BITS);
+
+    BaseType_t woken = pdFALSE;
+    if (bridge.task) vTaskNotifyGiveFromISR(bridge.task, &woken);
+    portYIELD_FROM_ISR(woken);
 }
 
+static void uart0_irq() { uart_bridge_irq(bridges[0]); }
+static void uart1_irq() { uart_bridge_irq(bridges[1]); }
+
+static uart_bridge_t *find_bridge(uint8_t itf) {
+    for (auto &bridge: bridges) {
+        if (bridge.itf == itf) return &bridge;
+    }
+    return nullptr;
+}
+
+// TinyUSB callbacks, called from tud_task(). The shell and plot interfaces poll instead.
+extern "C" {
+    void tud_cdc_rx_cb(uint8_t itf) {
+        if (auto *bridge = find_bridge(itf)) notify_bridge(*bridge);
+    }
+
+    void tud_cdc_tx_complete_cb(uint8_t itf) {
+        if (auto *bridge = find_bridge(itf)) notify_bridge(*bridge);
+    }
+
+    void tud_cdc_line_state_cb(uint8_t itf, __unused bool dtr, __unused bool rts) {
+        if (auto *bridge = find_bridge(itf)) notify_bridge(*bridge);
+    }
+}
+
+// Indexed by the CDC parity code; mark (3) and space (4) have no UART equivalent.
 static const uart_parity_t parity_map[] = {
     [0] = UART_PARITY_NONE,
     [1] = UART_PARITY_ODD,
     [2] = UART_PARITY_EVEN,
-    [3] = UART_PARITY_NONE,
 };
 
-static void configure_uart_bridge(uart_inst_t *instance, cdc_line_coding_t *usb, cdc_line_coding_t *uart) {
-    if (usb->bit_rate != uart->bit_rate) {
-        uart->bit_rate = usb->bit_rate;
-        uart_set_baudrate(instance, uart->bit_rate);
+static void apply_line_coding(uart_bridge_t &bridge) {
+    cdc_line_coding_t lc;
+    tud_cdc_n_get_line_coding(bridge.itf, &lc);
+
+    // Hosts may send 0 while closing the port; there is nothing sensible to apply.
+    if (lc.bit_rate == 0) return;
+
+    // Clamp what the UART cannot do, so a bad request neither asserts nor gets reapplied.
+    if (lc.data_bits < 5 || lc.data_bits > 8) lc.data_bits = 8;
+    if (lc.stop_bits != 2) lc.stop_bits = 0;   // 1.5 stop bits becomes 1
+    if (lc.parity >= count_of(parity_map)) lc.parity = 0;
+
+    if (memcmp(&lc, &bridge.line_coding, sizeof(lc)) == 0) return;
+
+    // Bytes already handed to the UART leave at the rate they were sent for.
+    uart_tx_wait_blocking(bridge.instance);
+
+    if (lc.bit_rate != bridge.line_coding.bit_rate) {
+        uart_set_baudrate(bridge.instance, lc.bit_rate);
+    }
+    uart_set_format(bridge.instance, lc.data_bits, lc.stop_bits == 2 ? 2 : 1, parity_map[lc.parity]);
+
+    bridge.line_coding = lc;
+}
+
+static void uart_to_usb(uart_bridge_t &bridge) {
+    // Nobody has the port open, so nobody would read this; keeping it would bury the live
+    // stream under stale bytes once someone does.
+    if (!tud_cdc_n_connected(bridge.itf)) {
+        ringbuf_skip(bridge.rx, ringbuf_count(bridge.rx));
+        return;
     }
 
-    if (
-        usb->data_bits != uart->data_bits
-        || usb->stop_bits != uart->stop_bits
-        || usb->parity != uart->parity
-    ) {
-        uart->data_bits = usb->data_bits;
-        uart->stop_bits = usb->stop_bits;
-        uart->parity = usb->parity;
+    bool moved = false;
+    for (;;) {
+        const uint8_t *data;
+        size_t len = ringbuf_peek(bridge.rx, &data);
+        if (!len) break;
 
-        auto parity = uart->parity < count_of(parity_map)
-                          ? parity_map[uart->parity]
-                          : parity_map[0];
-        uart_set_format(
-            instance,
-            uart->data_bits,
-            uart->stop_bits == 2 ? 2 : 1,
-            parity
-        );
+        // Takes what fits; the rest waits in rx until tud_cdc_tx_complete_cb.
+        len = tud_cdc_n_write(bridge.itf, data, len);
+        if (!len) break;
+
+        ringbuf_skip(bridge.rx, len);
+        moved = true;
+    }
+
+    if (moved) {
+        transfer_flag = 1;
+        tud_cdc_n_write_flush(bridge.itf);
     }
 }
 
-static void init_uart_bridge(uart_config_t &config) {
-    // config init
-    config.mtx = xSemaphoreCreateMutex();
-    config.uart = {.bit_rate = DEFAULT_BAUDRATE};
-
-    // hw init
-    gpio_init(config.pin1);
-    gpio_init(config.pin2);
-    gpio_set_function(config.pin1, GPIO_FUNC_UART);
-    gpio_set_function(config.pin2, GPIO_FUNC_UART);
-
-    uart_init(config.instance, config.baudrate);
-    uart_set_hw_flow(config.instance, false, false);
-    configure_uart_bridge(config.instance, &config.usb, &config.uart);
-    uart_set_fifo_enabled(config.instance, false);
-
-    if (config.instance == uart1) {
-        irq_set_exclusive_handler(UART1_IRQ, uart1_irq);
-        irq_set_enabled(UART1_IRQ, true);
-        uart_set_irq_enables(uart1, true, false);
-    } else {
-        irq_set_exclusive_handler(UART0_IRQ, uart0_irq);
-        irq_set_enabled(UART0_IRQ, true);
-        uart_set_irq_enables(uart0, true, false);
-    }
-}
-
-void vTaskUart(__unused void *pvParams) {
-    assert(pvParams != nullptr);
-    auto *puUartNumber = static_cast<unsigned int *>(pvParams);
-    const unsigned int uUartNumber = *puUartNumber;
-    assert(uUartNumber < count_of(configs));
-
-    init_uart_bridge(configs[uUartNumber]);
-
-    auto &config = configs[uUartNumber];
+static void usb_to_uart(uart_bridge_t &bridge) {
+    uart_hw_t *hw = uart_get_hw(bridge.instance);
 
     for (;;) {
-        uint32_t len;
+        if (bridge.tx_pos == bridge.tx_len) {
+            bridge.tx_pos = 0;
+            bridge.tx_len = tud_cdc_n_read(bridge.itf, bridge.tx, sizeof(bridge.tx));
+            if (!bridge.tx_len) return;
 
-        // config
-        tud_cdc_n_get_line_coding(config.itf, &config.usb);
-        configure_uart_bridge(config.instance, &config.usb, &config.uart);
-
-        // uart -> usb
-        if (config.buf_uart_size > 0) {
             transfer_flag = 1;
-
-            xSemaphoreTake(config.mtx, pdMS_TO_TICKS(100));
-            len = config.buf_uart_size;
-            memcpy(config.buf_tmp, config.buf_uart, len);
-            config.buf_uart_size = 0;
-            xSemaphoreGive(config.mtx);
-
-            tud_cdc_n_write(config.itf, config.buf_tmp, len);
-            tud_cdc_n_write_flush(config.itf);
         }
 
-        // usb -> uart
-        len = tud_cdc_n_available(config.itf);
-        if (!len) {
-            vTaskDelay(1);
-            continue;
+        while (bridge.tx_pos < bridge.tx_len && !(hw->fr & UART_UARTFR_TXFF_BITS)) {
+            hw->dr = bridge.tx[bridge.tx_pos++];
         }
 
-        len = tud_cdc_n_read(config.itf, config.buf_usb, sizeof(config.buf_usb));
-
-        if (len > 0) {
-            transfer_flag = 1;
-            uart_write_blocking(config.instance, config.buf_usb, len);
+        if (bridge.tx_pos < bridge.tx_len) {
+            // FIFO is full, so above its trigger level: the IRQ fires once it drains below.
+            hw_set_bits(&hw->imsc, UART_UARTIMSC_TXIM_BITS);
+            return;
         }
+    }
+}
+
+static void init_uart_bridge(uart_bridge_t &bridge) {
+    gpio_set_function(bridge.tx_pin, GPIO_FUNC_UART);
+    gpio_set_function(bridge.rx_pin, GPIO_FUNC_UART);
+
+    uart_init(bridge.instance, DEFAULT_BAUDRATE);
+    uart_set_hw_flow(bridge.instance, false, false);
+    uart_set_fifo_enabled(bridge.instance, true);
+    apply_line_coding(bridge);
+
+    uart_hw_t *hw = uart_get_hw(bridge.instance);
+    hw_write_masked(
+        &hw->ifls,
+        (RX_FIFO_LEVEL << UART_UARTIFLS_RXIFLSEL_LSB) | (TX_FIFO_LEVEL << UART_UARTIFLS_TXIFLSEL_LSB),
+        UART_UARTIFLS_RXIFLSEL_BITS | UART_UARTIFLS_TXIFLSEL_BITS
+    );
+
+    // The task must be known before the first IRQ can try to wake it.
+    bridge.task = xTaskGetCurrentTaskHandle();
+
+    // Enabled from the task, so the IRQ lands on the task's core. The IRQ and the task are
+    // then the producer and consumer of rx on one core, which ring_buffer.c relies on.
+    irq_set_exclusive_handler(bridge.irq, bridge.instance == uart0 ? uart0_irq : uart1_irq);
+    irq_set_enabled(bridge.irq, true);
+
+    // RX on the FIFO level, plus RX timeout for the tail of a burst below that level.
+    hw->imsc = UART_UARTIMSC_RXIM_BITS | UART_UARTIMSC_RTIM_BITS;
+}
+
+void vTaskUart(void *pvParams) {
+    const auto uUartNumber = reinterpret_cast<uintptr_t>(pvParams);
+    assert(uUartNumber < count_of(bridges));
+
+    auto &bridge = bridges[uUartNumber];
+    init_uart_bridge(bridge);
+
+    for (;;) {
+        apply_line_coding(bridge);
+        uart_to_usb(bridge);
+        usb_to_uart(bridge);
+
+        ulTaskNotifyTake(pdTRUE, IDLE_TIMEOUT);
     }
 }

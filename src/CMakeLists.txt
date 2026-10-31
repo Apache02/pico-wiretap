@@ -33,6 +33,7 @@ target_link_libraries(
         shell_commands_common
         commands
         plot
+        utils_ring_buffer
 )
 
 add_deploy_target(pico_wiretap "${CMAKE_CURRENT_BINARY_DIR}/pico_wiretap.uf2")
