@@ -15,9 +15,11 @@
 #define CFG_TUD_CDC_RX_BUFSIZE      512
 #define CFG_TUD_CDC_TX_BUFSIZE      2048
 
-// CDC Endpoint transfer buffer size, more is faster: one transfer moves this much per
-// tud_task() pass, and tud_task() runs once a tick, so 64 bytes would cap a port at 64 KB/s.
-#define CFG_TUD_CDC_EP_BUFSIZE      512
+// CDC Endpoint transfer buffer size. Must stay one packet: an OUT transfer only completes
+// when this many bytes or a short packet arrive, and Linux cdc-acm sends no ZLP, so a
+// stream ending on a full packet below this size would sit in the endpoint unseen.
+// Throughput comes from the bridge tasks flushing on every wake, not from a larger buffer.
+#define CFG_TUD_CDC_EP_BUFSIZE      64
 
 //#include <tusb_option.h>
 
